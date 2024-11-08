@@ -39,6 +39,8 @@ from transformers import (AdamW, get_linear_schedule_with_warmup,
 
 from bleu import _bleu
 from model import Seq2Seq
+import pandas as pd
+from sklearn.model_selection import train_test_split
 
 MODEL_CLASSES = {'roberta': (RobertaConfig, RobertaModel, RobertaTokenizer)}
 
@@ -46,7 +48,7 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     datefmt='%m/%d/%Y %H:%M:%S',
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
-
+Config_dataset = "dataset.csv"
 
 class Example(object):
     """A single training/test example."""
@@ -61,24 +63,44 @@ class Example(object):
         self.target = target
 
 
-def read_examples(filename):
-    """Read examples from filename."""
+###############################################
+## Split data into training,validation and testing
+def read_examples(param_type='train', random_state=42):
     examples = []
-    assert len(filename.split(',')) == 2
-    src_filename = filename.split(',')[0]
-    trg_filename = filename.split(',')[1]
-    idx = 0
-    with open(src_filename) as f1, open(trg_filename) as f2:
-        for line1, line2 in zip(f1, f2):
-            examples.append(
-                Example(
-                    idx=idx,
-                    source=line1.strip(),
-                    target=line2.strip(),
-                )
-            )
-            idx += 1
+    with open(Config_dataset, 'r') as file:
+        for idx, line in enumerate(file):
+            parts = line.strip().split('<SEP>')
+            if len(parts) == 2:
+                source, target = parts
+                examples.append(Example(idx=idx, source=source, target=target))
+            else:
+                print(f"Skipping line {idx + 1}: format issue (missing <SEP>).")
+
+    # Convert examples list to a DataFrame for easier splitting
+    df = pd.DataFrame([(ex.idx, ex.source, ex.target) for ex in examples], columns=['idx', 'source', 'target'])
+
+    # Split data into training, validation, and test sets (60%, 20%, 20%)
+    train_data, temp_data = train_test_split(df, test_size=0.4, random_state=random_state)
+    val_data, test_data = train_test_split(temp_data, test_size=0.5, random_state=random_state)
+
+    # Select the required portion
+    if param_type == 'train':
+        selected_data = train_data
+    elif param_type == 'validate':
+        selected_data = val_data
+    elif param_type == 'test':
+        selected_data = test_data
+    else:
+        raise ValueError("param_type must be 'train', 'validate', or 'test'")
+
+    # Convert selected portion back to a list of Example objects
+    examples = [
+        Example(idx=row['idx'], source=row['source'], target=row['target'])
+        for _, row in selected_data.iterrows()
+    ]
+    
     return examples
+################################################
 
 
 class InputFeatures(object):
@@ -305,7 +327,7 @@ def main():
 
     if args.do_train:
         # Prepare training data loader
-        train_examples = read_examples(args.train_filename)
+        train_examples = read_examples(param_type='train')
         train_features = convert_examples_to_features(train_examples, tokenizer, args, stage='train')
         all_source_ids = torch.tensor([f.source_ids for f in train_features], dtype=torch.long)
         all_source_mask = torch.tensor([f.source_mask for f in train_features], dtype=torch.long)
@@ -385,7 +407,7 @@ def main():
                     eval_examples, eval_data = dev_dataset['dev_loss']
                 else:
                     logger.info("Here3")
-                    eval_examples = read_examples(args.dev_filename)
+                    eval_examples = read_examples(param_type='validate')
                     eval_features = convert_examples_to_features(eval_examples, tokenizer, args, stage='dev')
                     all_source_ids = torch.tensor([f.source_ids for f in eval_features], dtype=torch.long)
                     all_source_mask = torch.tensor([f.source_mask for f in eval_features], dtype=torch.long)
@@ -447,7 +469,7 @@ def main():
                     eval_examples, eval_data = dev_dataset['dev_bleu']
                 else:
                     logger.info("Here5")
-                    eval_examples = read_examples(args.dev_filename)
+                    eval_examples = read_examples(param_type='validate')
                     eval_examples = random.sample(eval_examples, min(1000, len(eval_examples)))
                     eval_features = convert_examples_to_features(eval_examples, tokenizer, args, stage='test')
                     all_source_ids = torch.tensor([f.source_ids for f in eval_features], dtype=torch.long)
@@ -511,7 +533,7 @@ def main():
             files.append(args.test_filename)
         for idx, file in enumerate(files):
             logger.info("Test file: {}".format(file))
-            eval_examples = read_examples(file)
+            eval_examples = read_examples(param_type='test')
             eval_features = convert_examples_to_features(eval_examples, tokenizer, args, stage='test')
             all_source_ids = torch.tensor([f.source_ids for f in eval_features], dtype=torch.long)
             all_source_mask = torch.tensor([f.source_mask for f in eval_features], dtype=torch.long)
