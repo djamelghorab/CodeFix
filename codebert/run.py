@@ -67,7 +67,7 @@ class Example(object):
 ## Split data into training,validation and testing
 def read_examples(param_type='train', random_state=42):
     examples = []
-    with open(Config_dataset, 'r') as file:
+    with open(Config_dataset, 'r',encoding="utf-8") as file:
         for idx, line in enumerate(file):
             parts = line.strip().split('<SEP>')
             if len(parts) == 2:
